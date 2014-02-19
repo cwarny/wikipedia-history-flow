@@ -31,75 +31,87 @@ Array.prototype.multisplice = function () {
 	}
 }
 
-function f(i) {
-	console.log(i);
-	var ntext = editHistory[i].text[0]._; if (ntext === undefined) ntext = "";
-	var timestamp = editHistory[i].timestamp[0];
-	var contributor = editHistory[i].contributor[0]; 
+function f(j) {
+	console.log(j);
+	var ntext = editHistory[j].text[0]._; if (ntext === undefined) ntext = "";
+	ntext = ntext.replace(/\r+/g,"").replace(/\n+/g,"\n");
+	var timestamp = editHistory[j].timestamp[0];
+	var contributor = editHistory[j].contributor[0];
 	for (var k in contributor) contributor[k] = contributor[k][0];
-	if (i == 0) {
-		// Initialize history flow.
-		// historyFlow.push({
-		// 	contributions: [{
-		// 		start: 0,
-		// 		leng: ntext.length,
-		// 		contributor: contributor,
-		// 		timestamp: timestamp
-		// 	}],
-		// 	timestamp: timestamp,
-		// 	text: ntext
-		// });
-		previousRevision = {
+	if (editHistory[j].hasOwnProperty("comment")) var comment = editHistory[j].comment[0];
+	else var comment = "";
+	
+	var revision;
+
+	if (j == 0) {
+		revision = {
 			contributions: [{
 				start: 0,
 				leng: ntext.length,
 				contributor: contributor,
 				timestamp: timestamp
 			}],
-			timestamp: timestamp,
+			timestamp: timestamp
 			// text: ntext
 		};
-		otext = ntext;
-		i++;
-		f(i);
+	} else {
+		revision = {
+			// contributions: deepcopy(historyFlow[j-1].contributions), // Clones previous list of contributions so it can be modified without affecting the previous revision.
+			contributions: deepcopy(previousRevision.contributions),
+			timestamp: timestamp
+			// text: ntext
+		};
+		if (comment.search(/Reverted/g) === -1) {
+			var diff = jsdiff.diffLines(otext,ntext); // Calculates differences between two strings.
+			
+			/* * *
+			 * We are going to loop through the differences (either an addition, a removal or neither).
+			 * For each difference, we are going to modify the revision.
+			 * * */
+
+			var edit_start = 0;
+			for (var i=0; i<diff.length; i++) {
+				if (diff[i].added) {
+					if (i+1 < diff.length && diff[i+1].removed && diff[i].value.length < 3000 && diff[i+1].value.length < 3000) {
+						// In-line change
+						var difff = jsdiff.diffWords(diff[i+1].value, diff[i].value);
+						difff.forEach(function (part) {
+							var edit_stop = edit_start + part.value.length;
+							if (part.added) {
+								addPiece(part, contributor, timestamp, edit_start, edit_stop, revision.contributions);
+								edit_start += part.value.length;
+							} else if (part.removed) {
+								removePart(part, edit_start, edit_stop, revision.contributions);
+							} else {
+								edit_start += part.value.length;
+							}
+						});
+					} else {
+						// Pure addition
+						var edit_stop = edit_start + diff[i].value.length;
+						addPiece(diff[i], contributor, timestamp, edit_start, edit_stop, revision.contributions);
+						edit_start += diff[i].value.length;
+					}
+				} else if (diff[i].removed) {
+					if (i === 0 || !diff[i-1].added || diff[i-1].value.length > 3000 || diff[i].value.length > 3000) {
+						// Pure deletion
+						removePart(diff[i], edit_start, edit_stop, revision.contributions);
+					}
+				} else {
+					edit_start += diff[i].value.length;
+				}
+			}
+		}		
 	}
-	var revision = {
-		// contributions: deepcopy(historyFlow[i-1].contributions), // Clones previous list of contributions so it can be modified without affecting the previous revision.
-		contributions: deepcopy(previousRevision.contributions),
-		timestamp: timestamp,
-		text: ntext
-	};
-	console.log("Size of old text: " + otext.length);
-	console.log("Number of contributions: " + revision.contributions.length);
-	var diff = jsdiff.diffLines(otext,ntext); // Calculates differences between two strings.
-	
-	/* * *
-	 * We are going to loop through the differences (either an addition, a removal or neither).
-	 * For each difference, we are going to modify the revision.
-	 * * */
-
-	var edit_start = 0;
-	diff.forEach(function (part) {
-		var edit_stop = edit_start + part.value.length;
-		if (part.added) {
-			addPiece(part, contributor, timestamp, edit_start, edit_stop, revision.contributions);
-			edit_start += part.value.length;
-		} else if (part.removed) {
-			removePart(part, edit_start, edit_stop, revision.contributions);
-		} else {
-			edit_start += part.value.length;
-		}
-	});
-
 	// historyFlow.push(revision);
 	previousRevision = revision;
 	otext = ntext;
 	console.log(revision.timestamp);
-	fs.appendFile("history_flow.json", JSON.stringify(revision, null, "\t"), function (err) {
+	fs.appendFile("history_flow.json", JSON.stringify(revision, null, "\t") + "\n", function (err) {
 		if (err) throw err;
 		console.log("Revision saved to file.");
-		i++
-		f(i);
+		j++;
+		if (j < editHistory.length) f(j);
 	});
 }
 
@@ -110,10 +122,6 @@ request(url, function (err,res,body) {
 			console.log("XML parsed.");
 			editHistory = uu.sortBy(result.mediawiki.page[0].revision, function (d) { return new Date(d.timestamp); });
 			f(0);
-			// fs.writeFile("history_flow.json", JSON.stringify(historyFlow, null, "\t"), function (err) {
-			// 	if (err) throw err;
-			// 	console.log("History flow saved to file.");
-			// });
 		});
 	}
 });
@@ -192,36 +200,5 @@ function removePart (part, edit_start, edit_stop, contributions) {
 	if (indicesToSplice.length > 0) {
 		if (indicesToSplice.length > 1) Array.prototype.multisplice.apply(contributions,indicesToSplice);
 		else contributions.splice(indicesToSplice[0],1);
-	}
-}
-
-var edit_start = 0;
-for (var i=0; i<diff.length; i++) {
-	if (diff[i].added) {
-		if (diff[i+1].removed) {
-			console.log("In-line change");
-			var difff = jsdiff.diffChars(diff[i].value, diff[i+1].value);
-			difff.forEach(function (part) {
-				var edit_stop = edit_start + part.value.length;
-				if (part.added) {
-					addPiece(part, contributor, timestamp, edit_start, edit_stop, revision.contributions);
-					edit_start += part.value.length;
-				} else if (part.removed) {
-					removePart(part, edit_start, edit_stop, revision.contributions);
-				} else {
-					edit_start += part.value.length;
-				}
-			});
-		} else {
-			console.log("Pure addition");
-			var edit_stop = edit_start + diff[i].value.length;
-			addPiece(diff[i], contributor, timestamp, edit_start, edit_stop, revision.contributions);
-			edit_start += diff[i].value.length;
-		}
-	} else if (diff[i].removed && !diff[i-1].added) {
-		console.log("Pure deletion");
-		removePart(diff[i], edit_start, edit_stop, revision.contributions);
-	} else {
-		edit_start += diff[i].value.length;
 	}
 }
