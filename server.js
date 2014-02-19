@@ -4,7 +4,13 @@ var jsdiff = require("diff"),
 	qs = require("querystring"),
 	fs = require("fs"),
 	uu = require("underscore"),
-	deepcopy = require("deepcopy");
+	async = require("async"),
+	deepcopy = require("deepcopy"),
+	mongodb = require("mongodb");
+
+var MONGODB_URI = "mongodb://localhost/wikipedia",
+	db,
+	revisions;
 
 var burl = "http://en.wikipedia.org/w/index.php?";
 
@@ -19,6 +25,24 @@ var url = burl + qs.stringify({title:title,dir:dir,pages:page,action:action,hist
 var previousRevision;
 var editHistory;
 var otext = "";
+
+mongodb.MongoClient.connect(MONGODB_URI, function (err, database) {
+	if (err) throw err;
+	db = database;
+	revisions = db.collection("revisions");
+	request(url, function (err,res,body) {
+		console.log("Data grabbed.");
+		if (!err && res.statusCode == 200) {
+			xml2js.parseString(body, function (err,result) {
+				console.log("XML parsed.");
+				editHistory = uu.sortBy(result.mediawiki.page[0].revision, function (d) { return new Date(d.timestamp); });
+				f(0);
+			});
+		}
+	});
+});
+
+// Functions
 
 Array.prototype.multisplice = function () {
 	var args = Array.apply(null, arguments);
@@ -107,24 +131,13 @@ function f(j) {
 	previousRevision = revision;
 	otext = ntext;
 	console.log(revision.timestamp);
-	fs.appendFile("history_flow.json", JSON.stringify(revision, null, "\t") + "\n", function (err) {
+	revisions.insert(revision, {safe: true}, function (err, results) {
 		if (err) throw err;
-		console.log("Revision saved to file.");
+		console.log("Revision saved to db.");
 		j++;
 		if (j < editHistory.length) f(j);
 	});
 }
-
-request(url, function (err,res,body) {
-	console.log("Data grabbed.");
-	if (!err && res.statusCode == 200) {
-		xml2js.parseString(body, function (err,result) {
-			console.log("XML parsed.");
-			editHistory = uu.sortBy(result.mediawiki.page[0].revision, function (d) { return new Date(d.timestamp); });
-			f(0);
-		});
-	}
-});
 
 function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, contributions) {
 	
