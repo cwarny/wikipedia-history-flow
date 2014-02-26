@@ -13,8 +13,7 @@ import java.text.ParseException;
 import java.util.Date;
 import java.util.Locale;
 
-
-
+HashMap<String,Integer[]> cm = new HashMap<String,Integer[]>();
 SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ENGLISH);
 int revisionCount;
 
@@ -34,8 +33,6 @@ void setup() {
   DBCollection revisions = db.getCollection("revisions");
 
   revisionCount = int(revisions.count());
-
-  revisions.command(new BasicDBObject("aggregate", new BasicDBObject("$project")));
   
   DBCursor cursor = revisions.find();
   try {
@@ -48,6 +45,8 @@ void setup() {
     cursor.close();
     println("Done");
   }
+  
+  save("out/" + year() + month() + day() + hour() + minute() + second() + ".png"); // Save a snapshot
 }
 
 void renderRect(DBObject rev) {
@@ -65,12 +64,24 @@ void renderRect(DBObject rev) {
     DBObject contrib = (DBObject) contribs.get(i);
     int start = int(contrib.get("start").toString());
     int leng = int(contrib.get("leng").toString());
-
+    DBObject contributor = (DBObject) contrib.get("contributor");
+    String id;
+    try {
+      id = contributor.get("username").toString();
+    } catch (NullPointerException npe) {
+      id = contributor.get("ip").toString();
+    }     
+    if (!cm.containsKey(id)) {
+      Integer[] colorArray = {int(random(255)), int(random(255)), int(random(255))};
+      cm.put(id, colorArray);
+    }
+    
     float y = map(start, 0, 42183, height, 0);
-    float h = map(leng, 0, 42183, 0, height);
+    float h = map(leng, 1, 42183, 1, height);
     float x = map(j, 0, revisionCount, 0, width);
     float w = 1;
-    fill(random(255), random(255), random(255));
+    Integer[] ca = cm.get(id);
+    fill(ca[0], ca[1], ca[2]);
     rect(x, y, w, h);
   }
 }

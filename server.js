@@ -107,23 +107,28 @@ function f(j) {
 				timestamp: diffs[j].data.timestamp
 			}],
 			timestamp: diffs[j].data.timestamp,
+			text: diffs[j].data.text,
 			_id: j
 		};
 	} else {
 		rev = {
 			contributions: deepcopy(prevRev.contributions),
 			timestamp: diffs[j].data.timestamp,
+			text: diffs[j].data.text,
 			_id: j
 		};
 		if (diffs[j].data.comment.search(/Reverted/g) === -1) {
 			var edit_start = 0;
 			diffs[j].edits.forEach(function (part) {
-				var edit_stop = edit_start + part.value.length;
 				if (part.added) {
+					var edit_stop = edit_start + part.value.length;
 					addPiece(part, diffs[j].data.contributor, diffs[j].data.timestamp, edit_start, edit_stop, rev.contributions);
 					edit_start += part.value.length;
 				} else if (part.removed) {
-					removePart(part, edit_start, edit_stop, rev.contributions);
+					if (part.value[part.value.length-1] == "\n" && part.value.length > 1) leng = part.value.length - 1;
+					else leng = part.value.length;
+					var edit_stop = edit_start + leng;
+					removePart(part, edit_start, edit_stop, leng, rev.contributions);
 				} else {
 					edit_start += part.value.length;
 				}
@@ -175,7 +180,7 @@ function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, cont
 	});
 }
 
-function removePart (part, edit_start, edit_stop, contributions) {
+function removePart (part, edit_start, edit_stop, leng, contributions) {
 
 	// We loop through the previous revision pieces to find where the difference 
 	// we are currently looking at falls. Adapt the starting points and lengths
@@ -185,12 +190,12 @@ function removePart (part, edit_start, edit_stop, contributions) {
 	for (var j=0; j<contributions.length; j++) {
 		var piece_start = contributions[j].start;
 		var piece_stop = contributions[j].start + contributions[j].leng;
-		if (piece_start <= edit_start) {
+		if (piece_start < edit_start) {
 			if (piece_stop >= edit_start) {
 				if (piece_stop < edit_stop) {
 					contributions[j].leng = edit_start - piece_start;
 				} else {
-					contributions[j].leng -= part.value.length;
+					contributions[j].leng -= leng;
 				}
 			}
 		} else {
@@ -202,7 +207,7 @@ function removePart (part, edit_start, edit_stop, contributions) {
 					contributions[j].leng = piece_stop - edit_stop;
 				}
 			} else {
-				contributions[j].start -= part.value.length;
+				contributions[j].start -= leng;
 			}
 		}
 	}
