@@ -76,31 +76,12 @@ Array.prototype.multisplice = function () {
 
 function dif(item) {
 	var diff = jsdiff.diffLines(item[0].text, item[1].text);
-	var rev = {data: deepcopy(item[1]), edits: []};
-	for (var i=0; i<diff.length; i++) {
-		if (diff[i].added) {
-			if (i+1 < diff.length && diff[i+1].removed && diff[i].value.length < 3000 && diff[i+1].value.length < 3000) {
-				// In-line change
-				var difff = jsdiff.diffWords(diff[i+1].value, diff[i].value);
-				rev.edits.push.apply(rev.edits, difff);
-			} else {
-				// Pure addition
-				rev.edits.push(diff[i]);
-			}
-		} else if (diff[i].removed) {
-			if (i === 0 || !diff[i-1].added || diff[i-1].value.length > 3000 || diff[i].value.length > 3000) {
-				// Pure deletion
-				rev.edits.push(diff[i]);
-			}
-		} else {
-			rev.edits.push(diff[i]);
-		}
-	}
+	var rev = {data: deepcopy(item[1]), edits: diff};
 	return rev;
 }
 
 function f(i) {
-	console.log(i);
+	// console.log("i: " + i);
 	var rev;
 	if (i == 0) {
 		rev = {
@@ -131,15 +112,14 @@ function f(i) {
 			};
 			var edit_start = 0;
 			diffs[i].edits.forEach(function (part) {
+				// console.log("Edit start: " + edit_start);
+				var edit_stop = edit_start + part.value.length;
+				// console.log("Edit stop: " + edit_stop);
 				if (part.added) {
-					var edit_stop = edit_start + part.value.length;
 					addPiece(part, diffs[i].data.contributor, diffs[i].data.timestamp, edit_start, edit_stop, rev.contributions);
 					edit_start += part.value.length;
 				} else if (part.removed) {
-					if (part.value[part.value.length-1] == "\n" && part.value.length > 1) leng = part.value.length - 1;
-					else leng = part.value.length;
-					var edit_stop = edit_start + leng;
-					removePart(part, edit_start, edit_stop, leng, rev.contributions);
+					removePart(part, edit_start, edit_stop, rev.contributions);
 				} else {
 					edit_start += part.value.length;
 				}
@@ -163,14 +143,20 @@ function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, cont
 	// of each affected piece, then splice the new piece in the contributions array.
 
 	var indexToSplice;
+	// console.log("Contributions length: " + contributions.length);
+	// console.log("Edit start: " + edit_start);
+	// console.log("Edit stop: " + edit_stop);
 	for (var j=0; j<contributions.length; j++) {
 		var piece_start = contributions[j].start;
-		var piece_stop = contributions[j].start + contributions[j].leng;
+		var piece_stop = piece_start + contributions[j].leng;
+		// console.log("Piece start: " + piece_start);
+		// console.log("Piece stop: " + piece_stop);
 		if (piece_start < edit_start) {
 			if (edit_start <= piece_stop) {
 				indexToSplice = j+1;
 				contributions[j].leng = edit_start - piece_start;
 				if (edit_start != piece_stop) {
+					// console.log("Ajoutons");
 					contributions.splice(j+1,0,{
 						start: edit_start, // Will be bumped by part.value.length at next iteration of for loop
 						leng: piece_stop - edit_start,
@@ -184,15 +170,18 @@ function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, cont
 		}
 	}
 
+	// console.log("Index to splice: " + indexToSplice);
+
 	contributions.splice(indexToSplice, 0, {
 		start: edit_start,
 		leng: newPiece.value.length,
 		contributor: contributor,
 		timestamp: timestamp
 	});
+	// if (indexToSplice) console.log("Contributions length after splicing: " + contributions.length);
 }
 
-function removePart (part, edit_start, edit_stop, leng, contributions) {
+function removePart (part, edit_start, edit_stop, contributions) {
 
 	// We loop through the previous revision pieces to find where the difference 
 	// we are currently looking at falls. Adapt the starting points and lengths
@@ -207,7 +196,7 @@ function removePart (part, edit_start, edit_stop, leng, contributions) {
 				if (piece_stop < edit_stop) {
 					contributions[j].leng = edit_start - piece_start;
 				} else {
-					contributions[j].leng -= leng;
+					contributions[j].leng -= part.value.length;
 				}
 			}
 		} else {
@@ -219,11 +208,12 @@ function removePart (part, edit_start, edit_stop, leng, contributions) {
 					contributions[j].leng = piece_stop - edit_stop;
 				}
 			} else {
-				contributions[j].start -= leng;
+				contributions[j].start -= part.value.length;
 			}
 		}
 	}
 	if (indicesToSplice.length > 0) {
+		// console.log("Indices to delete: " + indicesToSplice.toString());
 		if (indicesToSplice.length > 1) Array.prototype.multisplice.apply(contributions,indicesToSplice);
 		else contributions.splice(indicesToSplice[0],1);
 	}
