@@ -16,6 +16,7 @@ import java.util.Locale;
 HashMap<String,Integer[]> cm = new HashMap<String,Integer[]>();
 SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ENGLISH);
 int revisionCount;
+float prevX, prevY;
 
 void setup() {
   background(0);
@@ -59,7 +60,8 @@ void renderRect(DBObject rev) {
   }
 
   BasicBSONList contribs = (BasicBSONList) rev.get("contributions");
-  int j = int(rev.get("_id").toString());
+  float x = int(rev.get("_id").toString()) * 10;
+  float y = height;
   for (int i=0; i<contribs.size(); i++) {
     DBObject contrib = (DBObject) contribs.get(i);
     int start = int(contrib.get("start").toString());
@@ -76,13 +78,11 @@ void renderRect(DBObject rev) {
       cm.put(id, colorArray);
     }
     
-    float y = map(start, 0, 42183, height, 0);
-    float h = map(leng, 1, 42183, 1, height);
-    float x = map(j, 0, revisionCount, 0, width);
-    float w = 1;
+    float h = map(leng, 0, 42183, 0, height);
     Integer[] ca = cm.get(id);
     fill(ca[0], ca[1], ca[2]);
-    rect(x, y, w, h);
+    rect(x, y-h, 1, h);
+    y -= h;
   }
 }
 
