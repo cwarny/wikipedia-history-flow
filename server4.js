@@ -89,7 +89,8 @@ function f(i) {
 				start: 0,
 				leng: diffs[i].data.text.length,
 				contributor: diffs[i].data.contributor,
-				timestamp: diffs[i].data.timestamp
+				timestamp: diffs[i].data.timestamp,
+				slope: 0
 			}],
 			timestamp: diffs[i].data.timestamp,
 			text: diffs[i].data.text,
@@ -99,7 +100,7 @@ function f(i) {
 		if (diffs[i].data.comment.search(/Reverted/g) !== -1 && prevRev[prevRev.length-2].text === diffs[i].data.text) {
 			rev = {
 				contributions: prevRev[prevRev.length-2].contributions.map(function (d) {
-					return { start: d.start, leng: d.leng, contributor: d.contributor, timestamp: d.timestamp, slope: 0 };
+					return { start: d.start, leng: d.leng, contributor: deepcopy(d.contributor), timestamp: d.timestamp, slope: 0 };
 				}),
 				timestamp: diffs[i].data.timestamp,
 				text: diffs[i].data.text,
@@ -108,25 +109,22 @@ function f(i) {
 		} else {
 			rev = {
 				contributions: prevRev[prevRev.length-1].contributions.map(function (d) {
-					return { start: d.start, leng: d.leng, contributor: d.contributor, timestamp: d.timestamp, slope: 0 };
+					return { start: d.start, leng: d.leng, contributor: deepcopy(d.contributor), timestamp: d.timestamp, slope: 0 };
 				}),
 				timestamp: diffs[i].data.timestamp,
 				text: diffs[i].data.text,
 				_id: i
 			};
 			var edit_start = 0;
-			var delta = 0;
 			diffs[i].edits.forEach(function (part) {
 				// console.log("Edit start: " + edit_start);
 				var edit_stop = edit_start + part.value.length;
 				// console.log("Edit stop: " + edit_stop);
 				if (part.added) {
-					addPiece(part, diffs[i].data.contributor, diffs[i].data.timestamp, edit_start, edit_stop, rev.contributions, delta);
+					addPiece(part, diffs[i].data.contributor, diffs[i].data.timestamp, edit_start, edit_stop, rev.contributions);
 					edit_start += part.value.length;
-					delta += part.value.length;
 				} else if (part.removed) {
-					removePart(part, edit_start, edit_stop, rev.contributions, delta);
-					delta -= part.value.length
+					removePart(part, edit_start, edit_stop, rev.contributions);
 				} else {
 					edit_start += part.value.length;
 				}
@@ -143,7 +141,7 @@ function f(i) {
 	});
 }
 
-function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, contributions, slope) {
+function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, contributions) {
 	
 	// We loop through the previous revision pieces to find where the difference 
 	// we are currently looking at falls. Adapt the starting points and lengths
@@ -169,7 +167,7 @@ function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, cont
 						leng: piece_stop - edit_start,
 						contributor: contributions[j].contributor,
 						timestamp: contributions[j].timestamp,
-						slope: slope + newPiece.value.length
+						slope: contributions[j].slope + newPiece.value.length
 					});
 				}
 			}
@@ -186,18 +184,20 @@ function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, cont
 		leng: newPiece.value.length,
 		contributor: contributor,
 		timestamp: timestamp,
-		slope: slope
+		slope: indexToSplice == 0 ? 0 : contributions[indexToSplice-1].slope
 	});
 	// if (indexToSplice) console.log("Contributions length after splicing: " + contributions.length);
 }
 
-function removePart (part, edit_start, edit_stop, contributions, slope) {
+function removePart (part, edit_start, edit_stop, contributions) {
 
 	// We loop through the previous revision pieces to find where the difference 
 	// we are currently looking at falls. Adapt the starting points and lengths
 	// of each affected piece.
 
 	var indicesToSplice = [];
+	var indexToSplice, theLeng;
+
 	for (var j=0; j<contributions.length; j++) {
 		var piece_start = contributions[j].start;
 		var piece_stop = contributions[j].start + contributions[j].leng;
@@ -206,14 +206,9 @@ function removePart (part, edit_start, edit_stop, contributions, slope) {
 				if (piece_stop < edit_stop) {
 					contributions[j].leng = edit_start - piece_start;
 				} else {
-					contributions[j].leng -= (piece_stop - edit_start);
-					contributions.splice(j+1, 0, {
-						start: edit_start,
-						leng: piece_stop - edit_stop,
-						contributor: contributions[j].contributor,
-						timestamp: contributions[j].timestamp,
-						slope: slope - part.value.length
-					});
+					contributions[j].leng = edit_start - piece_start;
+					indexToSplice = j+1;
+					theLeng = piece_stop - edit_stop
 				}
 			}
 		} else {
@@ -235,6 +230,15 @@ function removePart (part, edit_start, edit_stop, contributions, slope) {
 		// console.log("Indices to delete: " + indicesToSplice.toString());
 		if (indicesToSplice.length > 1) Array.prototype.multisplice.apply(contributions,indicesToSplice);
 		else contributions.splice(indicesToSplice[0],1);
+	}
+	if (indexToSplice) {
+		contributions.splice(indexToSplice, 0, {
+			start: edit_start,
+			leng: theLeng,
+			contributor: contributions[indexToSplice-1].contributor,
+			timestamp: contributions[indexToSplice-1].timestamp,
+			slope: contributions[indexToSplice-1].slope - part.value.length
+		});
 	}
 }
 

@@ -142,7 +142,7 @@ function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, cont
 	// we are currently looking at falls. Adapt the starting points and lengths
 	// of each affected piece, then splice the new piece in the contributions array.
 
-	var indexToSplice;
+	var indexToSplice = 0;
 	// console.log("Contributions length: " + contributions.length);
 	// console.log("Edit start: " + edit_start);
 	// console.log("Edit stop: " + edit_stop);
