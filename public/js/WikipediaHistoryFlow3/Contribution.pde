@@ -9,9 +9,10 @@ class Contribution {
   Contributor contributor;
   Date timestamp = null;
   float y1start, y1stop, y0start, y0stop;
-  int leng;
+  int start, leng;
   int slope;
   float x0, x1;
+  float nLines = 1;
   
   Contribution(DBObject contrib, Revision rev) {
     this.rev = rev;
@@ -22,10 +23,13 @@ class Contribution {
       pe.printStackTrace();
     }
     
-    y1start = mainChartHeight - int(contrib.get("start").toString());
     leng = int(contrib.get("leng").toString());
-    slope = int(contrib.get("slope").toString());
+    start = int(contrib.get("start").toString());
+    calcNLines();
+    
+    y1start = mainChartHeight - start;
     y1stop = y1start - leng;
+    slope = int(contrib.get("slope").toString());
     y0stop = y1stop + slope;
     y0start = y1start + slope;
       
@@ -42,6 +46,28 @@ class Contribution {
     } else {
       contributor = contributors.get(id);
     }
+  }
+  
+  void calcNLines() {
+    int stop = start + leng;
+    String snippet = rev.text.substring(start, stop);
+    String[] tokens = splitTokens(snippet);
+    float lineX = 0;
+    for (int i=0; i<tokens.length; i++) {
+      if (lineX + textWidth(tokens[i]) > textAreaWidth) {
+        nLines++;
+        lineX = textWidth(tokens[i] + " ") ;
+      } else if (lineX + textWidth(tokens[i]) == textAreaWidth) {
+        nLines++;
+        lineX = 0;
+      } else {
+        lineX += textWidth(tokens[i] + " ");
+      }
+    }
+    Matcher matcher = pattern.matcher(snippet);
+    int k = 0;
+    while (matcher.find()) k++;
+    nLines += k;
   }
   
   void render() {

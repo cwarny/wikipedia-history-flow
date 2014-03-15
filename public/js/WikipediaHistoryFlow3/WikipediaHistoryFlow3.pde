@@ -7,13 +7,14 @@ import com.mongodb.BasicDBObject;
 import com.mongodb.DBObject;
 import com.mongodb.DBCursor;
 import com.mongodb.ServerAddress;
-
 import java.text.SimpleDateFormat;
 import java.text.ParseException;
 import java.util.Date;
 import java.util.Locale;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ENGLISH);
 
@@ -23,24 +24,25 @@ float revisionCount;
 float xScale, yScale;
 float timeStart = 0; 
 float timeWindowLength = 100;
-float sizeMax = 42183.0;
+float revWidth;
+float relativeMaxSize;
+float absoluteMaxSize = MIN_FLOAT;
 float bottomChartHeight = 200;
 float mainChartHeight;
 float textAreaWidth = 400;
-float rectX, rectY, rectW, rectH;
+float rectX, rectW;
 Revision selectedRevision;
+float a, d;
+Pattern pattern;
 
 void setup() {
   background(0);
   size(displayWidth, displayHeight);
-  mainChartHeight = height - bottomChartHeight;
+  initGlobalVariables();
 
   MongoClient mongoClient = null;
-  try {
-    mongoClient = new MongoClient();
-  } 
-  catch (Exception e) {
-  }
+  try { mongoClient = new MongoClient(); }
+  catch (Exception e) {}
 
   DB db = mongoClient.getDB("wikipedia");
   DBCollection collection = db.getCollection("revisions");
@@ -72,30 +74,39 @@ void draw() {
 }
 
 void mousePressed() {
-  if (mouseY > rectY && mouseY < height && mouseX < rectX || mouseX > rectX + rectW) {
+  if (mouseY > mainChartHeight && mouseY < height && (mouseX < rectX || mouseX > rectX + rectW)) {
     rectX = mouseX;
     timeStart = map(rectX, 0, width - textAreaWidth, 0, revisionCount);
   }
 }
 
 void mouseDragged() {
-  if (mouseY > rectY && mouseY < height && mouseX > rectX && mouseX < rectX + rectW) {
+  if (mouseY > mainChartHeight && mouseY < height && mouseX > rectX && mouseX < rectX + rectW) {
     rectX = rectX + (mouseX - pmouseX);
     timeStart = map(rectX, 0, width - textAreaWidth, 0, revisionCount);
   }
 }
 
+void initGlobalVariables() {
+  pattern = Pattern.compile("\n|\r");
+  mainChartHeight = height - bottomChartHeight;
+  a = textAscent();
+  d = textDescent();
+  textLeading(a);
+  revWidth = timeWindowLength/100;
+}
+
 void updateScales() {
-  sizeMax = 0;
+  relativeMaxSize = 0;
   for (Revision rev : revisions) {
     if (rev.id > timeStart && rev.id < timeStart + timeWindowLength) {
-      if (rev.size > sizeMax) sizeMax = rev.size;
+      if (rev.size > relativeMaxSize) relativeMaxSize = rev.size;
     }
   }
   
-  float xDomain = timeWindowLength * 10;
+  float xDomain = (timeWindowLength-1) * revWidth + revWidth*10;
   xScale = (width - textAreaWidth) / xDomain;
-  yScale = mainChartHeight / sizeMax;
+  yScale = mainChartHeight / relativeMaxSize;
 }
 
 void renderMainChart() {
@@ -123,7 +134,7 @@ void renderBottomChart() {
   beginShape();
     for (Revision rev : revisions) {
       float bx = map(rev.id, 0, revisionCount, 0, width - textAreaWidth);
-      float by = map(rev.size, 0, 42183.0, height, height - bottomChartHeight);
+      float by = map(rev.size, 0, absoluteMaxSize, height, height - bottomChartHeight);
       curveVertex(bx, by);
     }
   endShape();
@@ -133,17 +144,13 @@ void renderBottomChart() {
 }
 
 void renderSelectedRevision() {
-//  fill(210);
-//  text(selectedRevision.text, width - textAreaWidth + 80, 0, textAreaWidth - 80, height);
   float yText = 0;
+  float selectedRevisionScreenHeight = map(selectedRevision.size, 0, relativeMaxSize, 0, mainChartHeight);
+  if (mouseY < mainChartHeight) yText -= map(mouseY, mainChartHeight - selectedRevisionScreenHeight, mainChartHeight, a*selectedRevision.nLines + d, 0);
   for (Contribution contrib : selectedRevision.contributions) {
-    int start = int(mainChartHeight - contrib.y1start);
-    int stop = int(mainChartHeight - contrib.y1stop);
-    String snippet = selectedRevision.text.substring(start, stop);
-    float numberOfLines = ceil(textWidth(snippet) / textAreaWidth);
-    float lineHeight = textAscent() + textDescent();
-    fill(contrib.contributor.col, 210);
-    text(snippet, width - textAreaWidth + 80, yText, textAreaWidth - 80, yText + numberOfLines * lineHeight);
-    yText += numberOfLines * (lineHeight + 1);
+    fill(contrib.contributor.col);
+    String snippet = selectedRevision.text.substring(contrib.start, contrib.start + contrib.leng);
+    text(snippet, width - textAreaWidth, yText, textAreaWidth, yText + a * contrib.nLines + d);
+    yText += a * contrib.nLines + d;
   }
 }
