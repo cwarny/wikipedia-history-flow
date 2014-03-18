@@ -34,6 +34,6 @@ app.get("/", function(req, res) {
 app.get("/article/:id", function(req, res){
 	console.log(req.params.id);
 	revisions.find().toArray(function(err, results) {
-		res.json(results);
+		res.json(results.slice(0,500));
 	});
 });
