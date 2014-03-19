@@ -1,10 +1,9 @@
-var jsdiff = require("diff"),
-	request = require("request"),
-	xml2js = require("xml2js"),
-	qs = require("querystring"),
-	fs = require("fs"),
-	uu = require("underscore"),
+var request = require("request"),
 	async = require("async"),
+	xml2js = require("xml2js"),
+	uu = require("underscore"),
+	qs = require("querystring"),
+	jsdiff = require("diff"),
 	deepcopy = require("deepcopy"),
 	mongodb = require("mongodb");
 
@@ -12,60 +11,104 @@ var MONGODB_URI = "mongodb://localhost/wikipedia",
 	db,
 	revisions;
 
-var burl = "http://en.wikipedia.org/w/index.php?";
+var apiRootUrl = "http://en.wikipedia.org/w/api.php?",
+	exportRootUrl = "http://en.wikipedia.org/w/index.php?";
 
-var title = "Special:Export";
-var action = "submit";
-var page = "Albert_Camus";
-var limit = 500;
-var wholeHistory = false;
+var title = "Albert_Camus",
+	properties = "revisions",
+	limit = 115,
+	dir = "newer",
+	fields = "timestamp|ids";
 
-var url;
-if (wholeHistory) url = burl + qs.stringify({ title:title, pages:page, action:action, history:"" });
-else url = burl + qs.stringify({ title:title, pages:page, action:action, limit:limit });
+var offsets = [];
 
-var diffs;
+var diffs = [];
 var prevRev = [{},{}];
 
 mongodb.MongoClient.connect(MONGODB_URI, function (err, database) {
 	if (err) throw err;
 	db = database;
 	revisions = db.collection("revisions");
-	if (wholeHistory) request(url, function (err, res, body) { processResponse(err, res, body); });
-	else request.post(url, function (err, res, body) { processResponse(err, res, body); });
+	console.log("Gathering offsets...");
+	gatherOffsets(null, "2014-03-18T17:56:52Z");
 });
 
-// Functions
+function gatherOffsets(startid, maxTimestamp) {
+	if (startid) var apiUrl = apiRootUrl + qs.stringify({ format:"json", action:"query", titles:title, prop:properties, rvlimit:limit, rvprop:fields, rvdir:dir, rvstartid:startid });
+	else var apiUrl = apiRootUrl + qs.stringify({ format:"json", action:"query", titles:title, prop:properties, rvlimit:limit, rvprop:fields, rvdir:dir });
+	request(apiUrl, function(err, res, body) {
+		var data = JSON.parse(body);
+		var revisions = data.query.pages["983"].revisions;
+		var latestRev = revisions[revisions.length-1];
+		if (!startid) {
+			offsets.push(revisions[0].timestamp);
+			console.log(revisions[0].timestamp);
+		}
+		if (revisions.length > 1 && new Date(latestRev.timestamp) < new Date(maxTimestamp)) {
+			console.log(latestRev.timestamp);
+			offsets.push(latestRev.timestamp);
+			gatherOffsets(latestRev.revid, maxTimestamp);
+		} else {
+			console.log("Done gathering offsets.");
+			console.log("Exporting and diffing...");
+			async.map(offsets, 
+				exportData, 
+				function(err, results) {
+					console.log("hey");
+					for (var i=0; i<results.length-1; i++) {
+						if (i > 0) results[i][0].edits = jsdiff.diffLines(results[i][0].data.text, results[i-1][results[i].length-1].data.text);
+						diffs.push.apply(diffs, results[i]);
+					}
+					console.log("Done exporting and diffing.");
+					console.log("Calculating revs...");
+					f(0);
+				}
+			);
+		}
+	});
+}
 
+function exportData(offset, cb) {
+	var exportUrl = exportRootUrl + qs.stringify({ title:"Special:Export", pages:title, action:"submit", limit:limit, offset:offset });
+	request.post(exportUrl, function (err, res, body) { processResponse(offset, err, res, body, cb); });
+}
 
-function processResponse(err, res, body) {
-	console.log("Data grabbed.");
+function processResponse(offset, err, res, body, cb1) {
 	if (!err && res.statusCode == 200) {
+		console.log("Export starting from " + offset + " finished.");
 		xml2js.parseString(body, function (err, results) {
-			console.log("XML parsed.");
-			var editHistory = uu.sortBy(results.mediawiki.page[0].revision, function (d) { return new Date(d.timestamp); });
 
-			editHistory = uu.map(editHistory, function (d) { 
-				var text = d.text[0]._; if (text === undefined) text = "";
-				text = text.replace(/\r+/g,"").replace(/\n+/g,"\n");
-				var timestamp = d.timestamp[0];
-				var contributor = d.contributor[0];
-				for (var k in contributor) contributor[k] = contributor[k][0];
-				if (d.hasOwnProperty("comment")) var comment = d.comment[0];
-				else var comment = "";
-				return { text: text, timestamp: timestamp, contributor: contributor, comment: comment };
-			});
+			if (results.mediawiki.hasOwnProperty("page")) {
 
-			var editHistoryLag = editHistory.slice(0, editHistory.length-1);
-			editHistoryLag.unshift({text: ""});
-			var z = uu.zip(editHistoryLag, editHistory);
-			async.map(z, function (item, cb) { 
-				cb(null, dif(item)); 
-			}, function (err, res) { 
-				diffs = res; 
-				console.log("Diffs calculated.");
-				f(0);
-			});
+				var editHistory = uu.sortBy(results.mediawiki.page[0].revision, function (d) { return new Date(d.timestamp); });
+				editHistory = uu.map(editHistory, function (d) { 
+					var text = d.text[0]._; if (text === undefined) text = "";
+					text = text.replace(/\r+/g,"").replace(/\n+/g,"\n");
+					var timestamp = d.timestamp[0];
+					var contributor = d.contributor[0];
+					for (var k in contributor) contributor[k] = contributor[k][0];
+					if (d.hasOwnProperty("comment")) var comment = d.comment[0];
+					else var comment = "";
+					return { text: text, timestamp: timestamp, contributor: contributor, comment: comment };
+				});
+
+				var editHistoryLag = editHistory.slice(0, editHistory.length-1);
+				editHistoryLag.unshift({text: ""});
+				var z = uu.zip(editHistoryLag, editHistory);
+				async.map(z, 
+					dif, 
+					function (err, res) { 
+						console.log("Diffs for export starting from " + offset + " calculated.");
+						cb1(null, res);
+					}
+				);
+
+			} else {
+
+				cb1(null, []);
+
+			}
+
 		});
 	}
 }
@@ -81,14 +124,13 @@ Array.prototype.multisplice = function () {
 	}
 }
 
-function dif(item) {
+function dif(item, cb2) {
 	var diff = jsdiff.diffLines(item[0].text, item[1].text);
 	var rev = {data: deepcopy(item[1]), edits: diff};
-	return rev;
+	cb2(null, rev);
 }
 
 function f(i) {
-	// console.log("i: " + i);
 	var rev;
 	if (i == 0) {
 		rev = {
@@ -155,20 +197,14 @@ function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, cont
 	// of each affected piece, then splice the new piece in the contributions array.
 
 	var indexToSplice = 0;
-	// console.log("Contributions length: " + contributions.length);
-	// console.log("Edit start: " + edit_start);
-	// console.log("Edit stop: " + edit_stop);
 	for (var j=0; j<contributions.length; j++) {
 		var piece_start = contributions[j].start;
 		var piece_stop = piece_start + contributions[j].leng;
-		// console.log("Piece start: " + piece_start);
-		// console.log("Piece stop: " + piece_stop);
 		if (piece_start < edit_start) {
 			if (edit_start <= piece_stop) {
 				indexToSplice = j+1;
 				contributions[j].leng = edit_start - piece_start;
 				if (edit_start != piece_stop) {
-					// console.log("Ajoutons");
 					contributions.splice(j+1,0,{
 						start: edit_start, // Will be bumped by part.value.length at next iteration of for loop
 						leng: piece_stop - edit_start,
@@ -184,8 +220,6 @@ function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, cont
 		}
 	}
 
-	// console.log("Index to splice: " + indexToSplice);
-
 	contributions.splice(indexToSplice, 0, {
 		start: edit_start,
 		leng: newPiece.value.length,
@@ -193,7 +227,6 @@ function addPiece (newPiece, contributor, timestamp, edit_start, edit_stop, cont
 		timestamp: timestamp,
 		slope: indexToSplice == 0 ? 0 : contributions[indexToSplice-1].slope
 	});
-	// if (indexToSplice) console.log("Contributions length after splicing: " + contributions.length);
 }
 
 function removePart (part, edit_start, edit_stop, contributions) {
@@ -234,7 +267,6 @@ function removePart (part, edit_start, edit_stop, contributions) {
 		}
 	}
 	if (indicesToSplice.length > 0) {
-		// console.log("Indices to delete: " + indicesToSplice.toString());
 		if (indicesToSplice.length > 1) Array.prototype.multisplice.apply(contributions,indicesToSplice);
 		else contributions.splice(indicesToSplice[0],1);
 	}
@@ -248,4 +280,5 @@ function removePart (part, edit_start, edit_stop, contributions) {
 		});
 	}
 }
+
 
